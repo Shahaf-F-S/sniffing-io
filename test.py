@@ -8,8 +8,13 @@ def main() -> None:
     protocol_filter = PacketFilter(protocols=["tcp", "udp"])
     source_host_filter = PacketFilter(source_hosts=["192.168.0.37"])
     destination_host_filter = PacketFilter(destination_hosts=["192.168.0.37"])
+    port_filter = PacketFilter(source_ports=[6000])
 
-    static_filter = protocol_filter & (source_host_filter | destination_host_filter)
+    static_filter = (
+        protocol_filter &
+        (source_host_filter | destination_host_filter) &
+        ~port_filter
+    )
     print(static_filter.format())
 
     data = SniffSettings(count=10, static_filter=static_filter)
