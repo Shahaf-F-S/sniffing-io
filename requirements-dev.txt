@@ -1,0 +1,5 @@
+pdoc3
+twine
+pytest
+
+scapy

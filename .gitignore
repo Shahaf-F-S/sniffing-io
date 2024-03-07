@@ -1,0 +1,11 @@
+/.idea/
+/venv/
+/*.egg-info/
+/dist/
+/build/
+/specs/
+/docs/
+/pyproject.toml
+/MANIFEST.in
+/.pypirc
+/*.pcap
