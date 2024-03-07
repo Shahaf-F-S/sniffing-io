@@ -114,10 +114,6 @@ class PacketFilterOperand(BasePacketFilter, metaclass=ABCMeta):
 
         data = data.copy()
 
-        for key, value in data.items():
-            if isinstance(value, dict) and '__type__' in value:
-                data[key] = cls.TYPES[data['__type__']][0].load(value)
-
         return cls.TYPES[data.pop('__type__')][0].load(data)
 
     def dump(self) -> dict[str, ...]:
@@ -219,7 +215,7 @@ class PacketFilterNegation(PacketFilterOperand, BasePacketFilterUnion):
     @classmethod
     def load(cls, data: dict[str, ...]) -> "PacketFilterNegation":
 
-        return cls(PacketFilterOperand.load(data['filter']))
+        return cls(cls.TYPES[data['filter']['__type__']][0].load(data['filter']))
 
     def dump(self) -> dict[str, ...]:
 
@@ -387,7 +383,7 @@ PF = (
 
 def dump_packet_filter(data: PF) -> dict[str, ...]:
 
-    return PacketFilterOperand.dump(data)
+    return data.dump()
 
 def load_packet_filter(data: PF | str | dict[str, ...]) -> PF:
 
