@@ -198,7 +198,18 @@ class PacketFilterUnion(PacketFilterOperator, BasePacketFilterUnion):
         )
 
 @dataclass(slots=True, frozen=True, eq=False)
-class PacketFilterIntersection(PacketFilterOperator, BasePacketFilterUnion):
+class PacketFilterIntersection(PacketFilterOperator, BasePacketFilterIntersection):
+
+    def __and__(self, other: ...) -> "PacketFilterIntersection":
+
+        if isinstance(other, PacketFilterOperand):
+            if not isinstance(other, PacketFilterIntersection):
+                return PacketFilterIntersection((*self.filters, other))
+
+            else:
+                return PacketFilterIntersection((*self.filters, *other.filters))
+
+        return NotImplemented
 
     def format(self) -> str:
 
@@ -207,7 +218,7 @@ class PacketFilterIntersection(PacketFilterOperator, BasePacketFilterUnion):
         )
 
 @dataclass(slots=True, frozen=True, eq=False)
-class PacketFilterNegation(PacketFilterOperand, BasePacketFilterUnion):
+class PacketFilterNegation(PacketFilterOperand):
 
     filter: PacketFilterOperand
 
