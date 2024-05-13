@@ -228,6 +228,8 @@ class PacketFilterNegation(PacketFilterOperand, BasePacketFilterUnion):
 class PacketFilter(PacketFilterOperand):
 
     protocols: list[str] = None
+    hosts: list[str] = None
+    ports: list[int] = None
     source_hosts: list[str] = None
     source_ports: list[int] = None
     destination_hosts: list[str] = None
@@ -235,6 +237,8 @@ class PacketFilter(PacketFilterOperand):
 
     ATTRIBUTES: ClassVar[set[str]] = {
         'protocols',
+        'hosts'
+        'ports'
         'source_hosts',
         'source_ports',
         'destination_hosts',
@@ -283,12 +287,26 @@ class PacketFilter(PacketFilterOperand):
 
         return self.format_values(self.source_hosts, key="src host")
 
+    def format_hosts(self) -> str:
+
+        if not self.hosts:
+            return ""
+
+        return self.format_values(self.hosts, key="host")
+
     def format_destination_hosts(self) -> str:
 
         if not self.destination_hosts:
             return ""
 
         return self.format_values(self.destination_hosts, key="dst host")
+
+    def format_ports(self) -> str:
+
+        if not self.ports:
+            return ""
+
+        return self.format_values((str(port) for port in self.ports), key="port")
 
     def format_source_ports(self) -> str:
 
@@ -314,6 +332,8 @@ class PacketFilter(PacketFilterOperand):
             (
                 data for data in (
                     self.format_protocols(),
+                    self.format_hosts(),
+                    self.format_ports(),
                     self.format_source_hosts(),
                     self.format_source_ports(),
                     self.format_destination_hosts(),
