@@ -32,6 +32,16 @@ class BasePacketFilterOperator(metaclass=ABCMeta):
         if not values:
             return ""
 
+        values = tuple(values)
+
+        if len(values) == 1:
+            data = values[0]
+
+            if not (data.startswith("(") and data.endswith(")")):
+                data = f"({data})"
+
+            return data
+
         return f'({f" {joiner} ".join((value for value in values if value))})'
 
 class BasePacketFilterUnion(BasePacketFilterOperator, metaclass=ABCMeta):
