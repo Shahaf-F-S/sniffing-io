@@ -37,7 +37,7 @@ class BasePacketFilterOperator(metaclass=ABCMeta):
         if len(values) == 1:
             data = values[0]
 
-            if not (data.startswith("(") and data.endswith(")")):
+            if (" " in data) and not (data.startswith("(") and data.endswith(")")):
                 data = f"({data})"
 
             return data
