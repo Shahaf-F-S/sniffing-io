@@ -274,6 +274,9 @@ class PacketFilter(PacketFilterOperand):
         layers = (self.data_link, self.internet, self.transportation)
 
         for layer, layer_filter in zip(packet.layers(), layers):
+            if layer_filter is None:
+                continue
+
             layer_filter: PacketFilterValues
 
             if layer.name.lower() not in {n.lower() for n in layer_filter.types}:

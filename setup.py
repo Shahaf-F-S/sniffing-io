@@ -24,7 +24,7 @@ def main() -> None:
         requirements="requirements.txt",
         dev_requirements="requirements-dev.txt",
         name='sniffing-io',
-        version='0.1.0',
+        version='0.1.1',
         description=(
             "A simple package for packet sniffing, "
             "with static/dynamic filtering options, "
