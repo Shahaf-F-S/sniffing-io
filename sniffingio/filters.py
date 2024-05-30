@@ -6,7 +6,7 @@ from abc import ABCMeta, abstractmethod
 
 from dacite import from_dict
 
-from scapy.all import Packet
+from scapy.all import Packet, sniff
 
 __all__ = [
     "PacketFilterOperand",
@@ -24,7 +24,11 @@ __all__ = [
     "LivePacketFilter",
     "dump_packet_filter",
     "load_packet_filter",
-    "PacketFilterValues"
+    "PacketFilterValues",
+    "Types",
+    "Names",
+    "pf",
+    "pfv"
 ]
 
 def wrap(value: str) -> str:
@@ -33,6 +37,21 @@ def wrap(value: str) -> str:
         value = f"({value})"
 
     return value
+
+class Names:
+
+    HOST = 'host'
+    PORT = 'port'
+    SRC = 'src'
+    DST = 'dst'
+
+class Types:
+
+    TCP = 'tcp'
+    UDP = 'udp'
+    ICMP = 'icmp'
+    SMTP = 'smtp'
+    MAC = 'mac'
 
 class BasePacketFilterOperator(metaclass=ABCMeta):
 
@@ -137,6 +156,11 @@ class PacketFilterOperand(BasePacketFilter, metaclass=ABCMeta):
 
         return asdict(self)
 
+    @abstractmethod
+    def match(self, packet: Packet) -> bool:
+
+        pass
+
 @dataclass(slots=True, frozen=True)
 class StaticPacketFilter(PacketFilterOperand):
 
@@ -146,10 +170,14 @@ class StaticPacketFilter(PacketFilterOperand):
 
         return self.filter
 
+    def match(self, packet: Packet) -> bool:
+
+        return len(sniff(offline=packet, filter=self.filter, verbose=0)) > 0
+
 @dataclass(slots=True, frozen=True)
 class PacketFilterOperator(PacketFilterOperand, metaclass=ABCMeta):
 
-    filters: tuple["PacketFilterOperand", ...]
+    filters: tuple[PacketFilterOperand, ...]
 
     def __len__(self) -> int:
 
@@ -160,18 +188,22 @@ class PacketFilterUnion(PacketFilterOperator, BasePacketFilterUnion):
 
     def format(self) -> str:
 
-        return self.format_union(
-            (f.format() for f in self.filters or ())
-        )
+        return self.format_union((f.format() for f in self.filters or ()))
+
+    def match(self, packet: Packet) -> bool:
+
+        return any(f.match(packet) for f in self.filters)
 
 @dataclass(slots=True, frozen=True)
 class PacketFilterIntersection(PacketFilterOperator, BasePacketFilterIntersection):
 
     def format(self) -> str:
 
-        return self.format_intersection(
-            (f.format() for f in self.filters or ())
-        )
+        return self.format_intersection((f.format() for f in self.filters or ()))
+
+    def match(self, packet: Packet) -> bool:
+
+        return all(f.match(packet) for f in self.filters)
 
 @dataclass(slots=True, frozen=True)
 class PacketFilterNegation(PacketFilterOperand):
@@ -188,6 +220,10 @@ class PacketFilterNegation(PacketFilterOperand):
             return ""
 
         return f"(not {data})"
+
+    def match(self, packet: Packet) -> bool:
+
+        return self.filter.match(packet)
 
 def layers_names(packet: Packet) -> list[str]:
 
@@ -208,6 +244,7 @@ class PacketFilterValues[T](PacketFilterOperand):
     values: list[T] = None
     source_values: list[T] = None
     destination_values: list[T] = None
+    attributes: dict[str, list[T]] = None
 
     @classmethod
     def load(cls, data: dict[str, list[T]]) -> "PacketFilterValues[T]":
@@ -262,24 +299,23 @@ class PacketFilterValues[T](PacketFilterOperand):
 
         return self.format_intersection(values)
 
-@dataclass(slots=True, frozen=True, eq=False)
-class PacketFilter(PacketFilterOperand):
-
-    data_link: PacketFilterValues[str] = None
-    internet: PacketFilterValues[str] = None
-    transportation: PacketFilterValues[int] = None
-
     def match(self, packet: Packet) -> bool:
 
-        layers = (self.data_link, self.internet, self.transportation)
+        for layer in packet.layers():
+            if (
+                (self.types is not None) and
+                (layer.name.lower() not in {n.lower() for n in self.types})
+            ):
+                return False
 
-        for layer, layer_filter in zip(packet.layers(), layers):
-            if layer_filter is None:
-                continue
-
-            layer_filter: PacketFilterValues
-
-            if layer.name.lower() not in {n.lower() for n in layer_filter.types}:
+            if (
+                self.attributes and
+                not all(
+                    hasattr(packet, attr) and
+                    getattr(packet, attr) in values
+                    for attr, values in self.attributes.items()
+                )
+            ):
                 return False
 
             if hasattr(layer, 'src'):
@@ -293,8 +329,8 @@ class PacketFilter(PacketFilterOperand):
             else:
                 continue
 
-            sources = layer_filter.values + layer_filter.source_values
-            destinations = layer_filter.values + layer_filter.destination_values
+            sources = (self.values or []) + (self.source_values or [])
+            destinations = (self.values or []) + (self.destination_values or [])
 
             if (
                 (sources and (src not in sources)) or
@@ -304,15 +340,27 @@ class PacketFilter(PacketFilterOperand):
 
         return True
 
+@dataclass(slots=True, frozen=True, eq=False)
+class PacketFilter(PacketFilterOperand):
+
+    layers: list[PacketFilterValues] = None
+
+    def match(self, packet: Packet) -> bool:
+
+        for layer, layer_filter in zip(packet.layers(), self.layers):
+            if layer_filter is None:
+                continue
+
+            layer_filter: PacketFilterValues
+
+            if not layer_filter.match(layer):
+                return False
+
+        return True
+
     def format(self) -> str:
 
-        return self.format_intersection(
-            (
-                self.data_link.format(),
-                self.internet.format(),
-                self.transportation.format()
-            )
-        )
+        return self.format_intersection(layer.format() for layer in self.layers)
 
 def format_packet_filters(
         filters: BasePacketFilter | Iterable[BasePacketFilter],
@@ -376,3 +424,6 @@ def load_packet_filter(data: PF | str | dict[str, ...]) -> PF:
         return StaticPacketFilter(data)
 
     return PacketFilterOperand.load(data)
+
+pfv = PacketFilterValues
+pf = PacketFilter

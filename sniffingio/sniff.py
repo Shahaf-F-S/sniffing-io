@@ -20,12 +20,12 @@ __all__ = [
 
 class Sniffer:
 
-    def __init__(self, data: SniffSettings = None) -> None:
+    def __init__(self, settings: SniffSettings = None) -> None:
 
-        if data is None:
-            data = SniffSettings()
+        if settings is None:
+            settings = SniffSettings()
 
-        self.data = data
+        self.settings = settings
 
         self._sniffer = ScapyAsyncSniffer()
 
@@ -35,7 +35,7 @@ class Sniffer:
 
     def start(self, data: SniffSettings = None) -> PacketList:
 
-        data = data or self.data or SniffSettings()
+        data = data or self.settings or SniffSettings()
 
         callback = None
 

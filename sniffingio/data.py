@@ -12,7 +12,8 @@ __all__ = [
     "SniffSettings",
     "NetworkInterface",
     "Packet",
-    "PacketList"
+    "PacketList",
+    "settings"
 ]
 
 @dataclass(slots=True)
@@ -29,3 +30,5 @@ class SniffSettings:
     interface: str | NetworkInterface = None
     static_filter: str | dict | PacketFilterOperand | Iterable[PacketFilterOperand] = None
     start_callback: Callable[[], ...] = None
+
+settings = SniffSettings
