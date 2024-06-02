@@ -15,17 +15,16 @@ __all__ = [
     "PacketFilterOperator",
     "PacketFilterUnion",
     "PacketFilterNegation",
-    "BasePacketFilterUnion",
+    "UnionUtils",
     "BasePacketFilter",
     "StaticPacketFilter",
-    "BasePacketFilterOperator",
-    "BasePacketFilterIntersection",
+    "Utils",
+    "IntersectionUtils",
     "format_packet_filters",
     "LivePacketFilter",
     "dump_packet_filter",
     "load_packet_filter",
     "PacketFilterValues",
-    "Types",
     "Names",
     "pf",
     "pfv"
@@ -40,20 +39,39 @@ def wrap(value: str) -> str:
 
 class Names:
 
+    IP = 'ip'
     HOST = 'host'
     PORT = 'port'
     SRC = 'src'
     DST = 'dst'
-
-class Types:
-
+    ETHER = 'ether'
+    NET = 'net'
+    MASK = 'mask'
     TCP = 'tcp'
     UDP = 'udp'
     ICMP = 'icmp'
     SMTP = 'smtp'
     MAC = 'mac'
+    PORT_RANGE = 'portrange'
+    LESS = 'less'
+    GREATER = 'greater'
+    PROTO = 'proto'
+    BROADCAST = 'broadcast'
+    MULTICAST = 'multicast'
+    VLAN = 'vlan'
+    MPLS = 'mpls'
+    ARP = 'arp'
+    FDDI = 'fddi'
+    IP6 = 'ip6'
+    LINK = 'link'
+    PPP = 'ppp'
+    RADIO = 'radio'
+    RARP = 'rarp'
+    SLIP = 'slip'
+    TR = 'tr'
+    WLAN = 'wlan'
 
-class BasePacketFilterOperator(metaclass=ABCMeta):
+class Utils(metaclass=ABCMeta):
 
     @staticmethod
     def format_join(values: Iterable[str], joiner: str) -> str:
@@ -70,25 +88,21 @@ class BasePacketFilterOperator(metaclass=ABCMeta):
 
         return f"({data})"
 
-class BasePacketFilterUnion(BasePacketFilterOperator, metaclass=ABCMeta):
+class UnionUtils(Utils, metaclass=ABCMeta):
 
     @classmethod
     def format_union(cls, values: Iterable[str]) -> str:
 
         return cls.format_join(values, joiner="or")
 
-class BasePacketFilterIntersection(BasePacketFilterOperator, metaclass=ABCMeta):
+class IntersectionUtils(Utils, metaclass=ABCMeta):
 
     @classmethod
     def format_intersection(cls, values: Iterable[str]) -> str:
 
         return cls.format_join(values, joiner="and")
 
-class BasePacketFilter(
-    BasePacketFilterUnion,
-    BasePacketFilterIntersection,
-    metaclass=ABCMeta
-):
+class BasePacketFilter(UnionUtils, IntersectionUtils, metaclass=ABCMeta):
 
     @abstractmethod
     def format(self) -> str:
@@ -184,7 +198,7 @@ class PacketFilterOperator(PacketFilterOperand, metaclass=ABCMeta):
         return len(self.filters)
 
 @dataclass(slots=True, frozen=True)
-class PacketFilterUnion(PacketFilterOperator, BasePacketFilterUnion):
+class PacketFilterUnion(PacketFilterOperator, UnionUtils):
 
     def format(self) -> str:
 
@@ -195,7 +209,7 @@ class PacketFilterUnion(PacketFilterOperator, BasePacketFilterUnion):
         return any(f.match(packet) for f in self.filters)
 
 @dataclass(slots=True, frozen=True)
-class PacketFilterIntersection(PacketFilterOperator, BasePacketFilterIntersection):
+class PacketFilterIntersection(PacketFilterOperator, IntersectionUtils):
 
     def format(self) -> str:
 
@@ -223,18 +237,7 @@ class PacketFilterNegation(PacketFilterOperand):
 
     def match(self, packet: Packet) -> bool:
 
-        return self.filter.match(packet)
-
-def layers_names(packet: Packet) -> list[str]:
-
-    names = [packet.name]
-
-    while packet.payload:
-        packet = packet.payload
-
-        names.append(packet.name)
-
-    return names
+        return not self.filter.match(packet)
 
 @dataclass(slots=True, frozen=True)
 class PacketFilterValues[T](PacketFilterOperand):
@@ -360,7 +363,9 @@ class PacketFilter(PacketFilterOperand):
 
     def format(self) -> str:
 
-        return self.format_intersection(layer.format() for layer in self.layers)
+        return self.format_intersection(
+            layer.format() for layer in self.layers if layer is not None
+        )
 
 def format_packet_filters(
         filters: BasePacketFilter | Iterable[BasePacketFilter],
