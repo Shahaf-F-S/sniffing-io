@@ -3,15 +3,15 @@
 from sniffingio import Sniffer, SniffSettings, write_pcap, pfv
 
 def main() -> None:
-    """A function to run the main test."""
 
     ip_filter = pfv(names=['host'], values=['192.168.0.124', '192.168.0.45'])
     tcp_filter = pfv(names=['port'], values=[6000])
 
-    static_filter = ip_filter & ~tcp_filter
-    print(static_filter.format())
+    p_filter = ip_filter & ~tcp_filter
 
-    data = SniffSettings(count=10, static_filter=static_filter)
+    print(p_filter.format())
+
+    data = SniffSettings(count=10, static_filter=p_filter)
 
     sniffer = Sniffer(data)
     sniffed = sniffer.start()

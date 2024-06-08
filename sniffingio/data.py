@@ -1,10 +1,10 @@
 # data.py
 
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Callable
 
 from sniffingio.callbacks import PacketCallback
-from sniffingio.filters import LivePacketFilter, PacketFilterOperand
+from sniffingio.filters import LivePacketFilter, BasePacketFilter
 
 from scapy.all import NetworkInterface, PacketList, Packet
 
@@ -28,7 +28,7 @@ class SniffSettings:
     live_filter: LivePacketFilter = None
     stop_filter: LivePacketFilter = None
     interface: str | NetworkInterface = None
-    static_filter: str | dict | PacketFilterOperand | Iterable[PacketFilterOperand] = None
+    static_filter: str | BasePacketFilter = None
     start_callback: Callable[[], ...] = None
 
 settings = SniffSettings

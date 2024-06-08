@@ -9,7 +9,7 @@ from scapy.all import (
 )
 
 from sniffingio.data import SniffSettings
-from sniffingio.filters import format_packet_filters, load_packet_filter
+from sniffingio.filters import BasePacketFilter
 
 __all__ = [
     "sniff",
@@ -52,16 +52,10 @@ class Sniffer:
             else:
                 callback = data.printer
 
-        static_filter = None
+        static_filter = data.static_filter
 
-        if data.static_filter is not None:
-            static_filter = data.static_filter
-
-            if isinstance(static_filter, dict):
-                static_filter = load_packet_filter(static_filter)
-
-            if not isinstance(static_filter, str):
-                static_filter = format_packet_filters(static_filter)
+        if isinstance(static_filter, BasePacketFilter):
+            static_filter = static_filter.format()
 
         # noinspection PyProtectedMember
         self._sniffer._run(
