@@ -4,7 +4,7 @@ from io import BytesIO
 from dataclasses import dataclass
 from typing import Callable
 
-from scapy.all import Packet, PacketList, wrpcap, rdpcap
+from scapy.all import Packet, PacketList, rdpcap
 
 __all__ = [
     "dump_packet",
@@ -14,15 +14,7 @@ __all__ = [
 
 def dump_packet(packet: Packet | PacketList) -> bytes:
 
-    data = BytesIO()
-
-    payload = []
-
-    data.write = payload.append
-
-    wrpcap(data, packet)
-
-    return b"".join(payload)
+    return bytes(packet)
 
 def load_packet(data: bytes) -> PacketList:
 
