@@ -10,14 +10,14 @@ from scapy.packet import Raw, Packet
 
 __all__ = [
     "response_data",
-    "response",
+    "response_packet",
     "Peer",
-    "Communication",
+    "TCPCommunication",
     "filter_channels",
     "State",
-    "Hub",
+    "TCPHub",
     "Channel",
-    "Data",
+    "TCPData",
     "filter_communications"
 ]
 
@@ -44,7 +44,7 @@ def tcp_layer(packet: Packet) -> TCP:
 
 
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
-class Data:
+class TCPData:
 
     ack: int
     seq: int
@@ -52,77 +52,93 @@ class Data:
     payload: bytes | None = None
 
     @classmethod
-    def from_packet(cls, packet: Packet) -> Data:
+    def from_packet(cls, packet: Packet) -> TCPData:
         tcp = tcp_layer(packet)
 
         return cls(
             ack=tcp.ack,
             seq=tcp.seq,
-            flags=tcp.flags,
-            payload=packet[Raw].load if Raw in Packet else None
+            flags=str(tcp.flags),
+            payload=packet[Raw].load if str(tcp.flags) == 'PA' else None
         )
 
-    def response(self, payload: bytes = None) -> Data:
-        return response_data(self, payload=payload)
+    def response(self, flags: str = None, payload: bytes = None) -> TCPData:
+        return response_data(self, flags=flags, payload=payload)
+
+    def next(self, flags: str = None, payload: bytes = None) -> TCPData:
+        return next_data(self, flags=flags, payload=payload)
+
+    def to_tcp(self, source: int, destination: int) -> TCP | Packet:
+        tcp = TCP(sport=source, dport=destination, ack=self.ack, seq=self.seq, flags=self.flags)
+
+        if self.payload:
+            tcp = tcp / self.payload
+
+        return tcp
 
 
-def response_data(data: Packet | Data, payload: bytes = None) -> Data:
-    if not isinstance(data, Data):
-        data = Data.from_packet(data)
+def response_data(data: Packet | TCPData, flags: str = None, payload: bytes = None) -> TCPData:
+    if flags is None and payload:
+        flags = 'PA'
 
-    if data.flags not in ('PA', 'A'):
-        raise ValueError(f"input TCP flags must be either 'PA' or 'A', not: '{data.flags}'")
+    elif flags is None:
+        flags = 'A'
 
-    if (data.flags == 'PA') and (data.payload is None):
-        raise ValueError(f"input must contain nonempty payload when TCP flags is: 'PA'")
+    if not isinstance(data, TCPData):
+        data = TCPData.from_packet(data)
 
-    elif payload is not None:
-        raise ValueError(f"cannot add payload to 'A' TCP packet.")
-
-    return Data(
-        ack=data.seq + (0 if data.flags == 'A' else len(payload or '')),
+    return TCPData(
+        ack=data.seq + len(data.payload or b''),
         seq=data.ack,
-        flags='PA' if data.flags == 'A' else 'A',
+        flags=flags,
         payload=payload
     )
 
 
-def response(packet: Packet, payload: bytes = None) -> Packet:
+def next_data(data: Packet | TCPData, flags: str = None, payload: bytes = None) -> TCPData:
+    if flags is None and payload:
+        flags = 'PA'
+
+    elif flags is None:
+        flags = 'A'
+
+    if not isinstance(data, TCPData):
+        data = TCPData.from_packet(data)
+
+    return TCPData(
+        seq=data.seq + len(data.payload or b''),
+        ack=data.ack,
+        flags=flags,
+        payload=payload
+    )
+
+
+def response_packet(packet: Packet, flags: str = None, payload: bytes = None) -> Packet:
     ether = ether_layer(packet)
     ip = ip_layer(packet)
     tcp = tcp_layer(packet)
 
-    ack = tcp.seq
-    seq = tcp.ack
+    new_ether = Ether(src=ether.dst, dst=ether.src)
+    new_ip = IP(src=ip.dst, dst=ip.src)
+    new_tcp = response_data(packet, flags=flags, payload=payload).to_tcp(
+        source=tcp.dport, destination=tcp.sport
+    )
 
-    if tcp.flags == 'PA':
-        if Raw not in packet:
-            raise ValueError('packet must contain a Raw layer.')
+    return new_ether / new_ip / new_tcp
 
-        raw: Raw = packet[Raw]
-        seq += len(raw.load)
 
-        flags = 'A'
-
-    elif tcp.flags == 'A':
-        flags = 'PA'
-
-    else:
-        raise ValueError(f"cannot infer flags for new TCP packet from: '{tcp.flags}'")
+def next_packet(packet: Packet, flags: str = None, payload: bytes = None) -> Packet:
+    ether = ether_layer(packet)
+    ip = ip_layer(packet)
+    tcp = tcp_layer(packet)
 
     new_ether = Ether(src=ether.dst, dst=ether.src)
     new_ip = IP(src=ip.dst, dst=ip.src)
-    new_tcp = TCP(sport=tcp.dport, dport=tcp.sport, ack=ack, seq=seq, flags=flags)
+    new_tcp = next_data(packet, flags=flags, payload=payload).to_tcp(
+        source=tcp.dport, destination=tcp.sport
+    )
 
-    new_packet = new_ether / new_ip / new_tcp
-
-    if payload is not None:
-        if flags != 'PA':
-            raise ValueError(f"cannot add payload to a TCP packet with flag: '{flags}'")
-
-        new_packet = new_packet / packet
-
-    return new_packet
+    return new_ether / new_ip / new_tcp
 
 
 type PartialSignature = Iterable[
@@ -253,6 +269,12 @@ class Channel:
     def flip(self) -> Channel:
         return Channel(destination=self.source, source=self.destination)
 
+    def to_packet(self) -> Packet:
+        return (
+            Ether(src=self.source.mac, dst=self.destination.mac) /
+            IP(src=self.source.ip, dst=self.destination.ip)
+        )
+
 
 def filter_channels(
     channels: Iterable[Channel],
@@ -267,29 +289,48 @@ def filter_channels(
         channels
     )
 
+
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
-class Communication:
+class TCPCommunication:
 
     channel: Channel
-    data: Data
+    data: TCPData
 
     @classmethod
-    def signature(cls, packet: Packet) -> Communication:
+    def from_packet(cls, packet: Packet) -> TCPCommunication:
         return cls(
             channel=Channel.signature(packet),
-            data=Data.from_packet(packet)
+            data=TCPData.from_packet(packet)
         )
+
+    def to_tcp(self) -> TCP | Packet:
+        return self.data.to_tcp(
+            source=self.channel.source.port,
+            destination=self.channel.destination.port
+        )
+
+    def to_packet(self) -> Packet:
+        return self.channel.to_packet() / self.to_tcp()
 
     def channel_flip(self) -> Channel:
         return self.channel.flip()
 
-    def response_data(self, payload: bytes = None) -> Data:
-        return self.data.response(payload=payload)
+    def response_data(self, flags: str = None, payload: bytes = None) -> TCPData:
+        return self.data.response(flags=flags, payload=payload)
 
-    def response_communication(self, payload: bytes = None) -> Communication:
-        return Communication(
+    def next_data(self, flags: str = None, payload: bytes = None) -> TCPData:
+        return self.data.next(flags=flags, payload=payload)
+
+    def response(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
+        return TCPCommunication(
             channel=self.channel_flip(),
-            data=self.response_data(payload=payload)
+            data=self.response_data(flags=flags, payload=payload)
+        )
+
+    def next(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
+        return TCPCommunication(
+            channel=self.channel,
+            data=self.next_data(flags=flags, payload=payload)
         )
 
     def match(
@@ -303,18 +344,20 @@ class Communication:
             self.channel.match(source=source, destination=destination)
         )
 
+
 def filter_communications(
-    communications: Iterable[Communication],
+    communications: Iterable[TCPCommunication],
     source: PartialSignature = None,
     destination: PartialSignature = None,
     flags: str | set[str] = None
-) -> Iterable[Communication]:
+) -> Iterable[TCPCommunication]:
     source = default_signature(source)
     destination = default_signature(destination)
 
     for communication in communications:
         if communication.match(source=source, destination=destination, flags=flags):
             yield communication
+
 
 @dataclass
 class State:
@@ -327,14 +370,16 @@ class State:
         source: PartialSignature | None = None,
         destination: PartialSignature | None = None,
         flags: str | set[str] | None = None
-    ) -> None:
+    ) -> bool:
         if (source, destination, flags) != (None, None, None):
-            signature = Communication.signature(packet)
+            signature = TCPCommunication.from_packet(packet)
 
             if not signature.match(source=source, destination=destination, flags=flags):
-                return
+                return False
 
         self.packet = packet
+
+        return True
 
     @property
     def current_packet(self) -> Packet:
@@ -343,24 +388,33 @@ class State:
 
         return self.packet
 
-    def current_signature(self) -> Communication:
-        return Communication.signature(self.current_packet)
+    def current_communication(self) -> TCPCommunication:
+        return TCPCommunication.from_packet(self.current_packet)
 
-    def response_packet(self, payload: bytes = None) -> Packet:
-        return response(self.current_packet, payload=payload)
+    def response_packet(self, flags: str = None, payload: bytes = None) -> Packet:
+        return response_packet(self.current_packet, flags=flags, payload=payload)
 
-    def response_signature(self, payload: bytes = None) -> Communication:
-        return self.current_signature().response_communication(payload=payload)
+    def next_packet(self, flags: str = None, payload: bytes = None) -> Packet:
+        return next_packet(self.current_packet, flags=flags, payload=payload)
 
-    def response_state(self, payload: bytes = None) -> State:
-        return State(self.response_packet(payload=payload))
+    def response_communication(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
+        return self.current_communication().response(flags=flags, payload=payload)
+
+    def next_communication(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
+        return self.current_communication().next(flags=flags, payload=payload)
+
+    def response(self, flags: str = None, payload: bytes = None) -> State:
+        return State(self.response_packet(flags=flags, payload=payload))
+
+    def next(self, flags: str = None, payload: bytes = None) -> State:
+        return State(self.next_packet(flags=flags, payload=payload))
 
     def copy(self) -> State:
         return State(self.current_packet)
 
 
 @dataclass
-class Hub:
+class TCPHub:
 
     channels: dict[Channel, State] = field(default_factory=dict)
 
@@ -370,10 +424,10 @@ class Hub:
     def __getitem__(self, key: Channel | Packet) -> State:
         return self.get(key)
 
-    def copy(self) -> Hub:
-        return Hub({key: value.copy() for key, value in self.channels.items()})
+    def copy(self) -> TCPHub:
+        return TCPHub({key: value.copy() for key, value in self.channels.items()})
 
-    def update(self, hub: Hub) -> None:
+    def update(self, hub: TCPHub) -> None:
         self.channels.update(hub.channels)
 
     def collect(
@@ -382,7 +436,7 @@ class Hub:
         source: PartialSignature = None,
         destination: PartialSignature = None,
         flags: str | set[str] = None
-    ) -> None:
+    ) -> bool:
         if not isinstance(packet, Packet):
             raise ValueError(f'expected type {Packet}, got: {packet}')
 
@@ -392,9 +446,11 @@ class Hub:
             signature.match(source=source, destination=destination) and
             match_flags(tcp_layer(packet).flags, signature=flags)
         ):
-            return
+            return False
 
         self.channels.setdefault(signature, State()).collect(packet)
+
+        return True
 
     def get(self, key: Channel | Packet) -> State:
         if not isinstance(key, (Packet, Channel)):

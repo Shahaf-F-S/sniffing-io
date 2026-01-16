@@ -8,7 +8,10 @@ from pathlib import Path
 from sniffingio.callbacks import PacketCallback
 from sniffingio.filters import LivePacketFilter, BaseFilter
 
-from scapy.all import NetworkInterface, PacketList, Packet, rdpcap, wrpcap
+from scapy.all import (
+    NetworkInterface, PacketList, Packet, rdpcap, wrpcap,
+    send, sendp, sr, sr1, srp, srp1
+)
 
 
 __all__ = [
@@ -20,7 +23,13 @@ __all__ = [
     "PacketList",
     "settings",
     "read_pcap",
-    "write_pcap"
+    "write_pcap",
+    "send",
+    "sendp",
+    "sr",
+    "srp",
+    "sr1",
+    "srp1"
 ]
 
 
