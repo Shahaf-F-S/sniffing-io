@@ -1,14 +1,17 @@
 # data.py
 
+from io import BytesIO
 from dataclasses import dataclass
 from typing import Callable
 
 from sniffingio.callbacks import PacketCallback
-from sniffingio.filters import LivePacketFilter, BasePacketFilter
+from sniffingio.filters import LivePacketFilter, BaseFilter
 
-from scapy.all import NetworkInterface, PacketList, Packet
+from scapy.all import NetworkInterface, PacketList, Packet, rdpcap
 
 __all__ = [
+    "dump_packet",
+    "load_packet",
     "SniffSettings",
     "NetworkInterface",
     "Packet",
@@ -23,12 +26,20 @@ class SniffSettings:
     timeout: int = None
     store: bool = True
     quiet: bool = True
-    callback: PacketCallback = None
+    on_packet: PacketCallback = None
     printer: bool | PacketCallback = None
-    live_filter: LivePacketFilter = None
-    stop_filter: LivePacketFilter = None
+    dynamic_filter: LivePacketFilter = None
+    shutdown_filter: LivePacketFilter = None
     interface: str | NetworkInterface = None
-    static_filter: str | BasePacketFilter = None
-    start_callback: Callable[[], ...] = None
+    static_filter: str | BaseFilter = None
+    on_start: Callable[[], ...] = None
 
 settings = SniffSettings
+
+
+def dump_packet(packet: Packet | PacketList) -> bytes:
+    return bytes(packet)
+
+
+def load_packet(data: bytes) -> PacketList:
+    return rdpcap(BytesIO(data))

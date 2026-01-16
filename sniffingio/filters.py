@@ -1,37 +1,43 @@
 # filters.py
 
 from typing import Iterable, Callable, ClassVar, Self
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from abc import ABCMeta, abstractmethod
 
 from scapy.all import Packet, sniff
+from scapy.layers.inet import TCP, UDP
+
 
 __all__ = [
-    "PacketFilterOperand",
-    "PacketFilter",
-    "PacketFilterIntersection",
-    "PacketFilterOperator",
-    "PacketFilterUnion",
-    "PacketFilterNegation",
+    "Operand",
+    "Layers",
+    "Intersection",
+    "Operator",
+    "Union",
+    "Negation",
     "UnionUtils",
-    "BasePacketFilter",
-    "StaticPacketFilter",
+    "BaseFilter",
+    "StaticFilter",
     "Utils",
     "IntersectionUtils",
     "LivePacketFilter",
-    "PacketFilterValues",
+    "Values",
     "Names",
     "pf",
     "pfv",
-    "load_filters"
+    "load_filters",
+    "ip_filter",
+    "mac_filter",
+    "port_filter"
 ]
 
-def wrap(value: str) -> str:
 
+def wrap(value: str) -> str:
     if (" " in value) and not (value.startswith("(") and value.endswith(")")):
         value = f"({value})"
 
     return value
+
 
 class Names:
 
@@ -67,11 +73,11 @@ class Names:
     TR = 'tr'
     WLAN = 'wlan'
 
+
 class Utils(metaclass=ABCMeta):
 
     @staticmethod
     def format_join(values: Iterable[str], joiner: str) -> str:
-
         if not values:
             return ""
 
@@ -84,35 +90,35 @@ class Utils(metaclass=ABCMeta):
 
         return f"({data})"
 
+
 class UnionUtils(Utils, metaclass=ABCMeta):
 
     @classmethod
     def format_union(cls, values: Iterable[str]) -> str:
-
         return cls.format_join(values, joiner="or")
+
 
 class IntersectionUtils(Utils, metaclass=ABCMeta):
 
     @classmethod
     def format_intersection(cls, values: Iterable[str]) -> str:
-
         return cls.format_join(values, joiner="and")
 
-class BasePacketFilter(UnionUtils, IntersectionUtils, metaclass=ABCMeta):
+
+class BaseFilter(UnionUtils, IntersectionUtils, metaclass=ABCMeta):
 
     @abstractmethod
     def format(self) -> str:
-
         return ""
 
+
 @dataclass(slots=True, frozen=True)
-class PacketFilterOperand(BasePacketFilter, metaclass=ABCMeta):
+class Operand(BaseFilter, metaclass=ABCMeta):
 
     TYPE: ClassVar[str]
-    TYPES: ClassVar[dict[str, type["PF"]]] = {}
+    TYPES: ClassVar[dict[str, type[Operator]]] = {}
 
     def __init_subclass__(cls, **kwargs) -> None:
-
         try:
             super().__init_subclass__(**kwargs)
 
@@ -120,62 +126,59 @@ class PacketFilterOperand(BasePacketFilter, metaclass=ABCMeta):
             pass
 
         try:
+            cls: type[Operator]
             cls.TYPES.setdefault(cls.TYPE, cls)
 
         except AttributeError:
             pass
 
-    def __invert__(self) -> "PacketFilterOperand":
-
-        if isinstance(self, PacketFilterNegation):
+    def __invert__(self) -> "Operand":
+        if isinstance(self, Negation):
             return self.filter
 
-        return PacketFilterNegation(self)
+        return Negation(self)
 
-    def __or__(self, other: ...) -> "PacketFilterUnion":
-
-        if isinstance(other, PacketFilterOperand):
+    def __or__(self, other) -> "Union":
+        if isinstance(other, Operand):
             filters = []
 
-            if isinstance(self, PacketFilterUnion):
+            if isinstance(self, Union):
                 filters.extend(self.filters)
 
             else:
                 filters.append(self)
 
-            if isinstance(other, PacketFilterUnion):
+            if isinstance(other, Union):
                 filters.extend(other.filters)
 
             else:
                 filters.append(other)
 
-            return PacketFilterUnion(tuple(filters))
+            return Union(tuple(filters))
 
         return NotImplemented
 
-    def __and__(self, other: ...) -> "PacketFilterIntersection":
-
-        if isinstance(other, PacketFilterOperand):
+    def __and__(self, other) -> "Intersection":
+        if isinstance(other, Operand):
             filters = []
 
-            if isinstance(self, PacketFilterIntersection):
+            if isinstance(self, Intersection):
                 filters.extend(self.filters)
 
             else:
                 filters.append(self)
 
-            if isinstance(other, PacketFilterIntersection):
+            if isinstance(other, Intersection):
                 filters.extend(other.filters)
 
             else:
                 filters.append(other)
 
-            return PacketFilterIntersection(tuple(filters))
+            return Intersection(tuple(filters))
 
         return NotImplemented
 
     def dump(self) -> dict[str, ...]:
-
         data = asdict(self)
 
         data['type'] = self.TYPE
@@ -184,90 +187,80 @@ class PacketFilterOperand(BasePacketFilter, metaclass=ABCMeta):
 
     @abstractmethod
     def match(self, packet: Packet) -> bool:
-
         pass
 
-def load_filters(data: dict[str, ...]) -> "PF":
 
-    return PacketFilterOperand.TYPES[data['type']].load(data)
+def load_filters(data: dict[str, ...]) -> Operator:
+    return Operand.TYPES[data['type']].load(data)
+
 
 @dataclass(slots=True, frozen=True)
-class StaticPacketFilter(PacketFilterOperand):
+class StaticFilter(Operand):
 
     filter: str
-
     TYPE: ClassVar[str] = "static"
 
     def format(self) -> str:
-
         return self.filter
 
     def match(self, packet: Packet) -> bool:
-
         return len(sniff(offline=packet, filter=self.filter, verbose=0)) > 0
 
-@dataclass(slots=True, frozen=True)
-class PacketFilterOperator(PacketFilterOperand, metaclass=ABCMeta):
 
-    filters: tuple[PacketFilterOperand, ...]
+@dataclass(slots=True, frozen=True)
+class Operator(Operand, metaclass=ABCMeta):
+
+    filters: tuple[Operand, ...]
 
     def __len__(self) -> int:
-
         return len(self.filters)
 
     @classmethod
     def load(cls, data: dict[str, ...]) -> Self:
-
         data = data.copy()
         data.pop('type', None)
-
         data['filters'] = tuple(load_filters(f) for f in data['filters'])
 
         return cls(**data)
 
     def dump(self) -> dict[str, ...]:
-
-        data = PacketFilterOperand.dump(self)
-
+        data = Operand.dump(self)
         data['filters'] = tuple(f.dump() for f in self.filters)
 
         return data
 
+
 @dataclass(slots=True, frozen=True)
-class PacketFilterUnion(PacketFilterOperator, UnionUtils):
+class Union(Operator, UnionUtils):
 
     TYPE: ClassVar[str] = "union"
 
     def format(self) -> str:
-
         return self.format_union((f.format() for f in self.filters or ()))
 
     def match(self, packet: Packet) -> bool:
-
         return any(f.match(packet) for f in self.filters)
 
+
 @dataclass(slots=True, frozen=True)
-class PacketFilterIntersection(PacketFilterOperator, IntersectionUtils):
+class Intersection(Operator, IntersectionUtils):
 
     TYPE: ClassVar[str] = "intersection"
 
     def format(self) -> str:
-
         return self.format_intersection((f.format() for f in self.filters or ()))
 
     def match(self, packet: Packet) -> bool:
-
         return all(f.match(packet) for f in self.filters)
 
+
 @dataclass(slots=True, frozen=True)
-class PacketFilterNegation(PacketFilterOperand):
+class Negation(Operand):
 
-    filter: PacketFilterOperand
-
+    filter: Operand
     TYPE: ClassVar[str] = "negation"
 
     def format(self) -> str:
-
         data = self.filter.format()
 
         if not data:
@@ -276,42 +269,37 @@ class PacketFilterNegation(PacketFilterOperand):
         return f"(not {data})"
 
     def match(self, packet: Packet) -> bool:
-
         return not self.filter.match(packet)
 
     @classmethod
     def load(cls, data: dict[str, ...]) -> Self:
-
         data = data.copy()
         data.pop('type', None)
-
         data['filter'] = load_filters(data['filter'])
 
         return cls(**data)
 
     def dump(self) -> dict[str, ...]:
-
-        data = PacketFilterOperand.dump(self)
-
+        data = Operand.dump(self)
         data['filter'] = self.filter.dump()
 
         return data
 
-@dataclass(slots=True, frozen=True)
-class PacketFilterValues[T](PacketFilterOperand):
 
-    types: list[str] | None = None
-    names: list[str] | None = None
-    values: list[T] | None = None
-    source_values: list[T] | None = None
-    destination_values: list[T] | None = None
-    attributes: dict[str, list[T]] | None = None
+@dataclass(slots=True, frozen=True)
+class Values[T](Operand):
+
+    types: set[str] | None = field(default_factory=set)
+    names: set[str] | None = field(default_factory=set)
+    values: set[T] | None = field(default_factory=set)
+    source_values: set[T] | None = field(default_factory=set)
+    destination_values: set[T] | None = field(default_factory=set)
+    attributes: dict[str, set[T]] | None = field(default_factory=dict)
 
     TYPE: ClassVar[str] = "values"
 
     @classmethod
-    def load(cls, data: dict[str, ...]) -> "PacketFilterValues[T]":
-
+    def load(cls, data: dict[str, ...]) -> "Values[T]":
         data = data.copy()
         data.pop('type', None)
 
@@ -319,7 +307,6 @@ class PacketFilterValues[T](PacketFilterOperand):
 
     @classmethod
     def format_values(cls, values: Iterable[str], key: str = None) -> str:
-
         if not values:
             return ""
 
@@ -332,26 +319,25 @@ class PacketFilterValues[T](PacketFilterOperand):
         )
 
     def format(self) -> str:
-
         values = [
             self.format_union(values)
             for values in (
                 self.types,
                 (
                     self.format_values(self.values, key=name)
-                    for name in self.names or ['']
+                    for name in self.names
                 ),
                 (
                     self.format_values(
                         self.source_values, key=' '.join(['src', name])
                     )
-                    for name in self.names or ['']
+                    for name in self.names
                 ),
                 (
                     self.format_values(
                         self.destination_values, key=' '.join(['dst', name])
                     )
-                    for name in self.names or ['']
+                    for name in self.names
                 )
             )
             if values
@@ -362,7 +348,6 @@ class PacketFilterValues[T](PacketFilterOperand):
         return self.format_intersection(values)
 
     def match(self, packet: Packet) -> bool:
-
         for layer in packet.layers():
             if (
                 (self.types is not None) and
@@ -384,15 +369,15 @@ class PacketFilterValues[T](PacketFilterOperand):
                 src = layer.src
                 dst = layer.dst
 
-            elif hasattr(layer, 'sport'):
+            elif isinstance(layer, (TCP, UDP)):
                 src = layer.sport
                 dst = layer.dport
 
             else:
                 continue
 
-            sources = (self.values or []) + (self.source_values or [])
-            destinations = (self.values or []) + (self.destination_values or [])
+            sources = self.values | self.source_values
+            destinations = self.values | self.destination_values
 
             if (
                 (sources and (src not in sources)) or
@@ -402,20 +387,20 @@ class PacketFilterValues[T](PacketFilterOperand):
 
         return True
 
+
 @dataclass(slots=True, frozen=True, eq=False)
-class PacketFilter(PacketFilterOperand):
+class Layers(Operand):
 
-    layers: list[PacketFilterValues] = None
-
+    layers: list[Values] = field(default_factory=list)
     TYPE: ClassVar[str] = "packet"
 
     def match(self, packet: Packet) -> bool:
+        layer_filter: Values
+        layer: Packet
 
         for layer, layer_filter in zip(packet.layers(), self.layers):
             if layer_filter is None:
                 continue
-
-            layer_filter: PacketFilterValues
 
             if not layer_filter.match(layer):
                 return False
@@ -423,32 +408,27 @@ class PacketFilter(PacketFilterOperand):
         return True
 
     def format(self) -> str:
-
         return self.format_intersection(
             layer.format() for layer in self.layers if layer is not None
         )
 
-@dataclass(slots=True)
+
+@dataclass
 class LivePacketFilter:
 
     validator: Callable[[Packet], bool]
-
     disabled: bool = False
 
     def __call__(self, *args, **kwargs) -> bool:
-
         return self.validate(*args, **kwargs)
 
     def disable(self) -> None:
-
         self.disabled = True
 
     def enable(self) -> None:
-
         self.disabled = False
 
     def validate(self, packet: Packet) -> bool:
-
         if self.disabled:
             return True
 
@@ -456,13 +436,34 @@ class LivePacketFilter:
 
         return result
 
-PF = (
-    PacketFilter |
-    PacketFilterUnion |
-    PacketFilterIntersection |
-    PacketFilterNegation |
-    StaticPacketFilter
-)
 
-pfv = PacketFilterValues
-pf = PacketFilter
+type PF = Layers | Union | Intersection | Negation | StaticFilter | Values
+
+pfv = Values
+pf = Layers
+
+
+def _filter[T: str | int](name: str, values: set[T], src: bool = False, dst: bool = False) -> PF:
+    if not (src or dst):
+        return Values(names={name}, values=values)
+
+    if src and dst:
+        return Values(names={f'src {name}'}, values=values) & Values(names={'dst mac'}, values=values)
+
+    if src:
+        return Values(names={f'src {name}'}, values=values)
+
+    else:
+        return Values(names={f'dst {name}'}, values=values)
+
+
+def mac_filter(values: set[str], src: bool = False, dst: bool = False) -> PF:
+    return _filter('mac', values, src=src, dst=dst)
+
+
+def ip_filter(values: set[str], src: bool = False, dst: bool = False) -> PF:
+    return _filter('host', values, src=src, dst=dst)
+
+
+def port_filter(values: set[int], src: bool = False, dst: bool = False) -> PF:
+    return _filter('port', values, src=src, dst=dst)

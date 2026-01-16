@@ -48,13 +48,14 @@ sniffed2: PacketList = sniffer.packets()
 PacketFilter interface:
 
 intersection:
+
 ````python
-from sniffingio import PacketFilterIntersection, pfv
+from sniffingio import Intersection, pfv
 
 pf1 = pfv(names=['host'], values=['192.168.0.124', '192.168.0.45'])
 pf2 = pfv(names=['port'], values=[6000])
 
-intersection1 = PacketFilterIntersection((pf1, pf2))
+intersection1 = Intersection((pf1, pf2))
 intersection2 = pf1 & pf2
 
 print("same operation:", intersection1 == intersection2)
@@ -68,13 +69,14 @@ BPF: (((tcp or udp)) and ((src port 6000)))
 ```
 
 union:
+
 ````python
-from sniffingio import PacketFilterUnion, pfv
+from sniffingio import Union, pfv
 
 pf1 = pfv(names=['host'], values=['192.168.0.124', '192.168.0.45'])
 pf2 = pfv(names=['port'], values=[6000])
 
-union1 = PacketFilterUnion((pf1, pf2))
+union1 = Union((pf1, pf2))
 union2 = pf1 | pf2
 
 print("same operation:", union1 == union2)
@@ -88,12 +90,13 @@ BPF: (((tcp or udp)) or ((src port 6000)))
 ```
 
 negation:
+
 ````python
-from sniffingio import PacketFilterNegation, pfv
+from sniffingio import Negation, pfv
 
 pf = pfv(values=["tcp", "udp"])
 
-negation1 = PacketFilterNegation(pf)
+negation1 = Negation(pf)
 negation2 = ~pf
 
 print("same operation:", negation1 == negation2)

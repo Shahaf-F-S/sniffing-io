@@ -1,49 +1,39 @@
 # sniff.py
 
-from io import BytesIO
 import threading
 
-from scapy.all import (
-    PacketList, wrpcap, Packet, cast, rdpcap,
-    AsyncSniffer as ScapyAsyncSniffer
-)
+from scapy.all import PacketList, AsyncSniffer as ScapyAsyncSniffer
 
 from sniffingio.data import SniffSettings
-from sniffingio.filters import BasePacketFilter
+from sniffingio.filters import BaseFilter
 
 __all__ = [
     "sniff",
-    "Sniffer",
-    "write_pcap",
-    "read_pcap"
+    "Sniffer"
 ]
 
 class Sniffer:
 
     def __init__(self, settings: SniffSettings = None) -> None:
-
         if settings is None:
             settings = SniffSettings()
 
         self.settings = settings
-
         self._sniffer = ScapyAsyncSniffer()
 
     def packets(self) -> PacketList:
-
-        return cast(PacketList, self._sniffer.results)
+        return self._sniffer.results
 
     def start(self, data: SniffSettings = None) -> PacketList:
-
         data = data or self.settings or SniffSettings()
 
         callback = None
 
-        if data.callback and data.printer:
-            callback = lambda p: (data.callback(p), data.printer(p))
+        if data.on_packet and data.printer:
+            callback = lambda p: (data.on_packet(p), data.printer(p))
 
-        elif data.callback:
-            callback = data.callback
+        elif data.on_packet:
+            callback = data.on_packet
 
         elif data.printer:
             if data.printer is True:
@@ -54,7 +44,7 @@ class Sniffer:
 
         static_filter = data.static_filter
 
-        if isinstance(static_filter, BasePacketFilter):
+        if isinstance(static_filter, BaseFilter):
             static_filter = static_filter.format()
 
         # noinspection PyProtectedMember
@@ -65,30 +55,19 @@ class Sniffer:
             timeout=data.timeout,
             iface=data.interface,
             prn=callback,
-            lfilter=data.live_filter,
+            lfilter=data.dynamic_filter,
             filter=static_filter,
-            stop_filter=data.stop_filter,
-            started_callback=data.start_callback
+            stop_filter=data.shutdown_filter,
+            started_callback=data.on_start
         )
 
         return self.packets()
 
-    def thread_start(self) -> None:
-
+    def start_thread(self) -> None:
         threading.Thread(target=self.start).start()
 
     def stop(self) -> None:
-
         self._sniffer.stop()
 
 def sniff(data: SniffSettings) -> PacketList:
-
     return Sniffer(data).start()
-
-def write_pcap(packet: PacketList | list[Packet] | Packet, io: BytesIO | str) -> None:
-
-    wrpcap(io, packet)
-
-def read_pcap(io: BytesIO | str) -> PacketList | list[Packet] | Packet:
-
-    return rdpcap(io)
