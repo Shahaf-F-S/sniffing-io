@@ -9,8 +9,8 @@ from scapy.packet import Raw, Packet
 
 
 __all__ = [
-    "spoof_response_data",
-    "spoof_response",
+    "response_data",
+    "response",
     "Peer",
     "Communication",
     "filter_channels",
@@ -43,13 +43,6 @@ def tcp_layer(packet: Packet) -> TCP:
     return packet[TCP]
 
 
-def raw_layer(packet: Packet) -> Raw:
-    if not packet.haslayer(Raw):
-        raise ValueError('packet must contain a Raw layer.')
-
-    return packet[Raw]
-
-
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
 class Data:
 
@@ -59,7 +52,7 @@ class Data:
     payload: bytes | None = None
 
     @classmethod
-    def from_packet(cls, packet: Packet) -> "Data":
+    def from_packet(cls, packet: Packet) -> Data:
         tcp = tcp_layer(packet)
 
         return cls(
@@ -69,19 +62,11 @@ class Data:
             payload=packet[Raw].load if Raw in Packet else None
         )
 
-    def next(self, payload: bytes = None) -> "Data":
-        return spoof_response_data(self, payload=payload)
-
-    def copy(self) -> "Data":
-        return Data(
-            ack=self.ack, seq=self.seq,
-            flags=self.flags, payload=self.payload
-        )
+    def response(self, payload: bytes = None) -> Data:
+        return response_data(self, payload=payload)
 
 
-def spoof_response_data(
-        data: Packet | Data, payload: bytes = None
-) -> Data:
+def response_data(data: Packet | Data, payload: bytes = None) -> Data:
     if not isinstance(data, Data):
         data = Data.from_packet(data)
 
@@ -102,7 +87,7 @@ def spoof_response_data(
     )
 
 
-def spoof_response(packet: Packet, payload: bytes = None) -> Packet:
+def response(packet: Packet, payload: bytes = None) -> Packet:
     ether = ether_layer(packet)
     ip = ip_layer(packet)
     tcp = tcp_layer(packet)
@@ -115,7 +100,6 @@ def spoof_response(packet: Packet, payload: bytes = None) -> Packet:
             raise ValueError('packet must contain a Raw layer.')
 
         raw: Raw = packet[Raw]
-
         seq += len(raw.load)
 
         flags = 'A'
@@ -141,56 +125,58 @@ def spoof_response(packet: Packet, payload: bytes = None) -> Packet:
     return new_packet
 
 
-type PartialSignature = tuple[
-    str | list[str] | None,
-    str | list[str] | None,
-    int | list[int] | tuple[int, int] | None
+type PartialSignature = Iterable[
+    tuple[
+        str | set[str] | None,
+        str | set[str] | None,
+        int | set[int] | tuple[int, int] | None
+    ]
 ]
 
 
-def natural_signature(signature: PartialSignature) -> PartialSignature:
+def default_signature(signature: PartialSignature) -> PartialSignature:
     mac, ip, port = signature
 
     if isinstance(mac, str):
-        mac = [mac]
+        mac = {mac}
 
     if isinstance(ip, str):
-        ip = [ip]
+        ip = {ip}
 
     if isinstance(port, int):
-        port = [port]
+        port = {port}
 
     return mac, ip, port
 
 
-def match_flags(flags: str, signature: str | list[str] | None) -> bool:
+def match_flags(flags: str, signature: str | set[str] | None) -> bool:
     if signature is None:
         return True
 
     if isinstance(signature, str):
-        signature = [signature]
+        return flags == signature
 
     return flags in signature
 
 
-def match_address(address: str, signature: str | list[str] | None) -> bool:
+def match_address(address: str, signature: str | set[str] | None) -> bool:
     if signature is None:
         return True
 
     if isinstance(signature, str):
-        signature = [signature]
+        return address == signature
 
     return address in signature
 
 
-def match_port(port: int, signature: int | list[int] | tuple[int, int] | None) -> bool:
+def match_port(port: int, signature: int | set[int] | tuple[int, int] | None) -> bool:
     if signature is None:
         return True
 
     if isinstance(signature, int):
-        signature = [signature]
+        return port == signature
 
-    if isinstance(signature, list):
+    if isinstance(signature, set):
         return port in signature
 
     return signature[0] <= port >= signature[1]
@@ -217,27 +203,28 @@ class Peer:
     def port(self) -> int:
         return self.signature[2]
 
-    def match_mac(self, signature: str | list[str] | None) -> bool:
+    @classmethod
+    def load(cls, mac: str, ip: str, port: int) -> Peer:
+        return cls((mac, ip, port))
+
+    def match_mac(self, signature: str | set[str] | None) -> bool:
         return match_address(self.mac, signature)
 
-    def match_ip(self, signature: str | list[str] | None) -> bool:
+    def match_ip(self, signature: str | set[str] | None) -> bool:
         return match_address(self.ip, signature)
 
-    def match_port(self, signature: int | list[int] | tuple[int, int] | None) -> bool:
+    def match_port(self, signature: int | set[int] | tuple[int, int] | None) -> bool:
         return match_port(self.port, signature)
 
     def match(self, signature: PartialSignature) -> bool:
-        if signature is None:
+        if not signature:
             return True
 
-        return (
-            self.match_mac(signature[0]) and
-            self.match_ip(signature[1]) and
-            self.match_port(signature[2])
+        return all(
+            self.match_mac(s[0]) and self.match_ip(s[1]) and self.match_port(s[2])
+            for s in signature
         )
 
-    def copy(self) -> "Peer":
-        return Peer((self.mac, self.ip, self.port))
 
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
 class Channel:
@@ -246,7 +233,7 @@ class Channel:
     destination: Peer
 
     @classmethod
-    def signature(cls, packet: Packet) -> "Channel":
+    def signature(cls, packet: Packet) -> Channel:
         ether = ether_layer(packet)
         ip = ip_layer(packet)
         tcp = tcp_layer(packet)
@@ -263,23 +250,17 @@ class Channel:
     ) -> bool:
         return self.source.match(source) and self.destination.match(destination)
 
-    def next(self) -> "Channel":
-        return Channel(
-            destination=self.source.copy(), source=self.destination.copy()
-        )
+    def flip(self) -> Channel:
+        return Channel(destination=self.source, source=self.destination)
 
-    def copy(self) -> "Channel":
-        return Channel(
-            source=self.source.copy(), destination=self.destination.copy()
-        )
 
 def filter_channels(
     channels: Iterable[Channel],
     source: PartialSignature | None = None,
     destination: PartialSignature | None = None
 ) -> Iterable[Channel]:
-    source = natural_signature(source)
-    destination = natural_signature(destination)
+    source = default_signature(source)
+    destination = default_signature(destination)
 
     return filter(
         lambda channel: channel.match(source=source, destination=destination),
@@ -293,33 +274,29 @@ class Communication:
     data: Data
 
     @classmethod
-    def signature(cls, packet: Packet) -> "Communication":
+    def signature(cls, packet: Packet) -> Communication:
         return cls(
             channel=Channel.signature(packet),
             data=Data.from_packet(packet)
         )
 
-    def next_channel(self) -> Channel:
-        return self.channel.next()
+    def channel_flip(self) -> Channel:
+        return self.channel.flip()
 
-    def next_data(self, payload: bytes = None) -> Data:
-        return self.data.next(payload=payload)
+    def response_data(self, payload: bytes = None) -> Data:
+        return self.data.response(payload=payload)
 
-    def next(self, payload: bytes = None) -> "Communication":
+    def response_communication(self, payload: bytes = None) -> Communication:
         return Communication(
-            channel=self.next_channel(), data=self.next_data(payload=payload)
-        )
-
-    def copy(self) -> "Communication":
-        return Communication(
-            channel=self.channel.copy(), data=self.data.copy()
+            channel=self.channel_flip(),
+            data=self.response_data(payload=payload)
         )
 
     def match(
         self,
         source: PartialSignature | None = None,
         destination: PartialSignature | None = None,
-        flags: str | list[str] | None = None
+        flags: str | set[str] | None = None
     ) -> bool:
         return (
             match_flags(self.data.flags, signature=flags) and
@@ -330,13 +307,10 @@ def filter_communications(
     communications: Iterable[Communication],
     source: PartialSignature = None,
     destination: PartialSignature = None,
-    flags: str | list[str] = None
+    flags: str | set[str] = None
 ) -> Iterable[Communication]:
-    source = natural_signature(source)
-    destination = natural_signature(destination)
-
-    if isinstance(flags, str):
-        flags = [flags]
+    source = default_signature(source)
+    destination = default_signature(destination)
 
     for communication in communications:
         if communication.match(source=source, destination=destination, flags=flags):
@@ -352,7 +326,7 @@ class State:
         packet: Packet,
         source: PartialSignature | None = None,
         destination: PartialSignature | None = None,
-        flags: str | list[str] | None = None
+        flags: str | set[str] | None = None
     ) -> None:
         if (source, destination, flags) != (None, None, None):
             signature = Communication.signature(packet)
@@ -362,6 +336,7 @@ class State:
 
         self.packet = packet
 
+    @property
     def current_packet(self) -> Packet:
         if self.packet is None:
             raise ValueError('no packet was collected')
@@ -369,19 +344,19 @@ class State:
         return self.packet
 
     def current_signature(self) -> Communication:
-        return Communication.signature(self.current_packet())
+        return Communication.signature(self.current_packet)
 
-    def next_packet(self, payload: bytes = None) -> Packet:
-        return spoof_response(self.current_packet(), payload=payload)
+    def response_packet(self, payload: bytes = None) -> Packet:
+        return response(self.current_packet, payload=payload)
 
-    def next_signature(self, payload: bytes = None) -> Communication:
-        return self.current_signature().next(payload=payload)
+    def response_signature(self, payload: bytes = None) -> Communication:
+        return self.current_signature().response_communication(payload=payload)
 
-    def next(self, payload: bytes = None) -> "State":
-        return State(self.next_packet(payload=payload))
+    def response_state(self, payload: bytes = None) -> State:
+        return State(self.response_packet(payload=payload))
 
-    def copy(self) -> "State":
-        return State(self.current_packet())
+    def copy(self) -> State:
+        return State(self.current_packet)
 
 
 @dataclass
@@ -389,33 +364,16 @@ class Hub:
 
     channels: dict[Channel, State] = field(default_factory=dict)
 
-    def __iter__(self) -> Iterable[Channel]:
-        return self.keys()
-
     def __len__(self) -> int:
         return len(self.channels)
 
     def __getitem__(self, key: Channel | Packet) -> State:
         return self.get(key)
 
-    def __setitem__(self, key: Channel | Packet, value: State) -> None:
-        return self.set(key, value)
+    def copy(self) -> Hub:
+        return Hub({key: value.copy() for key, value in self.channels.items()})
 
-    def copy(self) -> "Hub":
-        return Hub(
-            {key.copy(): value.copy() for key, value in self.items()}
-        )
-
-    def keys(self) -> Iterable[Channel]:
-        return self.channels.copy().keys()
-
-    def values(self) -> Iterable[State]:
-        return self.channels.copy().values()
-
-    def items(self) -> Iterable[tuple[Channel, State]]:
-        return self.channels.copy().items()
-
-    def update(self, hub: "Hub") -> None:
+    def update(self, hub: Hub) -> None:
         self.channels.update(hub.channels)
 
     def collect(
@@ -423,7 +381,7 @@ class Hub:
         packet: Packet,
         source: PartialSignature = None,
         destination: PartialSignature = None,
-        flags: str | list[str] = None
+        flags: str | set[str] = None
     ) -> None:
         if not isinstance(packet, Packet):
             raise ValueError(f'expected type {Packet}, got: {packet}')
@@ -436,10 +394,7 @@ class Hub:
         ):
             return
 
-        if signature not in self.channels:
-            self.channels[signature] = State()
-
-        self.channels[signature].collect(packet)
+        self.channels.setdefault(signature, State()).collect(packet)
 
     def get(self, key: Channel | Packet) -> State:
         if not isinstance(key, (Packet, Channel)):
@@ -450,30 +405,19 @@ class Hub:
 
         return self.channels[key]
 
-    def set(self, key: Channel | Packet, value: State) -> None:
-        if not isinstance(value, State):
-            raise ValueError(f'value must be of type {State}, got: {value}')
-
-        if isinstance(key, Packet):
-            value.collect(key)
-
-            key = Channel.signature(key)
-
-        if not isinstance(key, (Packet, Channel)):
-            raise ValueError(f'key must be of type {Channel} or {Packet}, got: {key}')
-
-        self.channels[key] = value
-
     def filter(
-            self,
-            source: PartialSignature = None,
-            destination: PartialSignature = None,
-            flags: str | list[str] = None
+        self,
+        source: PartialSignature = None,
+        destination: PartialSignature = None,
+        flags: str | set[str] = None
     ) -> Generator[Channel, None, None]:
         if flags is None:
-            yield from filter_channels(self.keys(), source=source, destination=destination)
+            yield from filter_channels(
+                self.channels.keys(),
+                source=source, destination=destination
+            )
 
-        for key, value in self.items():
+        for key, value in self.channels.items():
             if (
                 key.match(source=source, destination=destination) and
                 (

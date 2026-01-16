@@ -3,11 +3,13 @@
 from io import BytesIO
 from dataclasses import dataclass
 from typing import Callable
+from pathlib import Path
 
 from sniffingio.callbacks import PacketCallback
 from sniffingio.filters import LivePacketFilter, BaseFilter
 
-from scapy.all import NetworkInterface, PacketList, Packet, rdpcap
+from scapy.all import NetworkInterface, PacketList, Packet, rdpcap, wrpcap
+
 
 __all__ = [
     "dump_packet",
@@ -16,8 +18,11 @@ __all__ = [
     "NetworkInterface",
     "Packet",
     "PacketList",
-    "settings"
+    "settings",
+    "read_pcap",
+    "write_pcap"
 ]
+
 
 @dataclass(slots=True)
 class SniffSettings:
@@ -43,3 +48,11 @@ def dump_packet(packet: Packet | PacketList) -> bytes:
 
 def load_packet(data: bytes) -> PacketList:
     return rdpcap(BytesIO(data))
+
+
+def write_pcap(packet: Packet | PacketList, path: str | Path):
+    return wrpcap(path, packet)
+
+
+def read_pcap(path: str | Path) -> PacketList:
+    return rdpcap(path)

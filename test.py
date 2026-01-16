@@ -12,7 +12,7 @@ def main() -> None:
 
     print(p_filter.format())
 
-    data = SniffSettings(count=10, static_filter=p_filter)
+    data = SniffSettings(count=10, static_filter=p_filter, timeout=2)
 
     sniffer = Sniffer(data)
     sniffed = sniffer.start()

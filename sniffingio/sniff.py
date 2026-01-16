@@ -7,10 +7,12 @@ from scapy.all import PacketList, AsyncSniffer as ScapyAsyncSniffer
 from sniffingio.data import SniffSettings
 from sniffingio.filters import BaseFilter
 
+
 __all__ = [
     "sniff",
     "Sniffer"
 ]
+
 
 class Sniffer:
 

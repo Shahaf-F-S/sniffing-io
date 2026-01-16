@@ -132,13 +132,13 @@ class Operand(BaseFilter, metaclass=ABCMeta):
         except AttributeError:
             pass
 
-    def __invert__(self) -> "Operand":
+    def __invert__(self) -> Operand:
         if isinstance(self, Negation):
             return self.filter
 
         return Negation(self)
 
-    def __or__(self, other) -> "Union":
+    def __or__(self, other) -> Union:
         if isinstance(other, Operand):
             filters = []
 
@@ -158,7 +158,7 @@ class Operand(BaseFilter, metaclass=ABCMeta):
 
         return NotImplemented
 
-    def __and__(self, other) -> "Intersection":
+    def __and__(self, other) -> Intersection:
         if isinstance(other, Operand):
             filters = []
 
@@ -299,7 +299,7 @@ class Values[T](Operand):
     TYPE: ClassVar[str] = "values"
 
     @classmethod
-    def load(cls, data: dict[str, ...]) -> "Values[T]":
+    def load(cls, data: dict[str, ...]) -> Values[T]:
         data = data.copy()
         data.pop('type', None)
 
