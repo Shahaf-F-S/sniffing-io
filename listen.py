@@ -6,19 +6,19 @@ def tcp_double_pa_r(hub: TCPHub, packet: Packet):
     if not hub.collect(packet):
         return
 
-    org = hub.get(packet).current_communication()
+    org = hub.get(packet).communication()
 
     pa_to_src = org.response(flags='PA', payload=b'hello')
-    sendp(pa_to_src.to_packet())
+    # sendp(pa_to_src.to_packet())
 
     r_to_src = pa_to_src.next(flags='R')
-    sendp(r_to_src.to_packet())
+    # sendp(r_to_src.to_packet())
 
     pa_to_dst = org.next(flags='PA', payload=b'hello')
-    sendp(pa_to_dst.to_packet())
+    # sendp(pa_to_dst.to_packet())
 
     r_to_dst = pa_to_dst.next(flags='R')
-    sendp(r_to_dst.to_packet())
+    # sendp(r_to_dst.to_packet())
 
     for c in (org, pa_to_src, r_to_src, pa_to_dst, r_to_dst):
         print(c)
@@ -29,7 +29,8 @@ def main(address: tuple[str, int]):
 
     settings = SniffSettings(
         count=1,
-        static_filter=f'tcp and (host {address[0]}) and (port {address[1]})',
+        static_filter=f'tcp',
+                      # f' and (host {address[0]}) and (port {address[1]})',
         on_packet=PacketCallback(
             lambda packet: tcp_double_pa_r(hub=hub, packet=packet)
         )

@@ -180,7 +180,6 @@ class Operand(BaseFilter, metaclass=ABCMeta):
 
     def dump(self) -> dict[str, ...]:
         data = asdict(self)
-
         data['type'] = self.TYPE
 
         return data
