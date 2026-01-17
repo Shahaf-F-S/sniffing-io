@@ -1,3 +1,4 @@
+# tcp_hub.py
 
 from sniffingio import TCPHub, Sniffer, SniffSettings, PacketCallback, Packet, sendp
 
@@ -29,8 +30,10 @@ def main(address: tuple[str, int]):
 
     settings = SniffSettings(
         count=1,
-        static_filter=f'tcp',
-                      # f' and (host {address[0]}) and (port {address[1]})',
+        static_filter=(
+            f'tcp'
+            # f' and (host {address[0]}) and (port {address[1]})'
+        ),
         on_packet=PacketCallback(
             lambda packet: tcp_double_pa_r(hub=hub, packet=packet)
         )

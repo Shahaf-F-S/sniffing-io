@@ -1,4 +1,4 @@
-# listener.py
+# tcp.py
 
 import socket
 from dataclasses import dataclass, field
@@ -7,26 +7,17 @@ from typing import Iterable
 from scapy.layers.inet import IP, TCP, Ether
 from scapy.packet import Raw, Packet
 
+from sniffingio.hub.utils import ether_layer, match_address
+
 
 __all__ = [
-    "response_data",
-    "response_packet",
-    "next_data",
-    "next_packet",
-    "Peer",
+    "TCPPeer",
     "TCPCommunication",
-    "State",
+    "TCPState",
     "TCPHub",
-    "Channel",
+    "TCPChannel",
     "TCPData"
 ]
-
-
-def ether_layer(packet: Packet) -> Ether:
-    if not packet.haslayer(Ether):
-        raise ValueError('packet must contain an Ether layer.')
-
-    return packet[Ether]
 
 
 def ip_layer(packet: Packet) -> IP:
@@ -68,16 +59,6 @@ def match_flags(flags: str, signature: str | set[str] | None) -> bool:
         return flags == signature
 
     return flags in signature
-
-
-def match_address(address: str, signature: str | set[str] | None) -> bool:
-    if signature is None:
-        return True
-
-    if isinstance(signature, str):
-        return address == signature
-
-    return address in signature
 
 
 def match_port(port: int, signature: int | set[int] | tuple[int, int] | None) -> bool:
@@ -135,6 +116,8 @@ class TCPData:
     ack: int
     seq: int
     flags: str
+    source_port: int
+    destination_port: int
     payload: bytes | None = None
 
     @classmethod
@@ -143,6 +126,7 @@ class TCPData:
 
         return cls(
             ack=tcp.ack, seq=tcp.seq, flags=str(tcp.flags),
+            source_port=tcp.sport, destination_port=tcp.dport,
             payload=packet[Raw].load if str(tcp.flags) == 'PA' else None
         )
 
@@ -152,9 +136,9 @@ class TCPData:
     def next(self, flags: str = None, payload: bytes = None) -> TCPData:
         return next_data(self, flags=flags, payload=payload)
 
-    def to_tcp(self, source: int, destination: int) -> TCP | Packet:
+    def to_tcp(self) -> TCP | Packet:
         tcp = TCP(
-            sport=source, dport=destination,
+            sport=self.source_port, dport=self.destination_port,
             ack=self.ack, seq=self.seq, flags=self.flags
         )
 
@@ -184,7 +168,9 @@ def response_data(data: Packet | TCPData, flags: str = None, payload: bytes = No
 
     return TCPData(
         ack=data.seq + len(data.payload or b''),
-        seq=data.ack, flags=flags, payload=payload
+        seq=data.ack, flags=flags, payload=payload,
+        source_port=data.destination_port,
+        destination_port=data.source_port
     )
 
 
@@ -200,20 +186,19 @@ def next_data(data: Packet | TCPData, flags: str = None, payload: bytes = None) 
 
     return TCPData(
         seq=data.seq + len(data.payload or b''),
-        ack=data.ack, flags=flags, payload=payload
+        ack=data.ack, flags=flags, payload=payload,
+        destination_port=data.destination_port,
+        source_port=data.source_port
     )
 
 
 def response_packet(packet: Packet, flags: str = None, payload: bytes = None) -> Packet:
     ether = ether_layer(packet)
     ip = ip_layer(packet)
-    tcp = tcp_layer(packet)
 
     new_ether = Ether(src=ether.dst, dst=ether.src)
     new_ip = IP(src=ip.dst, dst=ip.src)
-    new_tcp = response_data(packet, flags=flags, payload=payload).to_tcp(
-        source=tcp.dport, destination=tcp.sport
-    )
+    new_tcp = response_data(packet, flags=flags, payload=payload).to_tcp()
 
     return new_ether / new_ip / new_tcp
 
@@ -221,19 +206,16 @@ def response_packet(packet: Packet, flags: str = None, payload: bytes = None) ->
 def next_packet(packet: Packet, flags: str = None, payload: bytes = None) -> Packet:
     ether = ether_layer(packet)
     ip = ip_layer(packet)
-    tcp = tcp_layer(packet)
 
     new_ether = Ether(src=ether.dst, dst=ether.src)
     new_ip = IP(src=ip.dst, dst=ip.src)
-    new_tcp = next_data(packet, flags=flags, payload=payload).to_tcp(
-        source=tcp.dport, destination=tcp.sport
-    )
+    new_tcp = next_data(packet, flags=flags, payload=payload).to_tcp()
 
     return new_ether / new_ip / new_tcp
 
 
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
-class Peer:
+class TCPPeer:
 
     signature: tuple[str, str, int]
 
@@ -253,7 +235,7 @@ class Peer:
         return self.signature[2]
 
     @classmethod
-    def load(cls, mac: str, ip: str, port: int) -> Peer:
+    def load(cls, mac: str, ip: str, port: int) -> TCPPeer:
         return cls((mac, ip, port))
 
     def match(self, signature: Signature) -> bool:
@@ -266,20 +248,20 @@ class Peer:
 
 
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
-class Channel:
+class TCPChannel:
 
-    source: Peer
-    destination: Peer
+    source: TCPPeer
+    destination: TCPPeer
 
     @classmethod
-    def from_packet(cls, packet: Packet) -> Channel:
+    def from_packet(cls, packet: Packet) -> TCPChannel:
         ether = ether_layer(packet)
         ip = ip_layer(packet)
         tcp = tcp_layer(packet)
 
         return cls(
-            source=Peer((ether.src, ip.src, tcp.sport)),
-            destination=Peer((ether.dst, ip.dst, tcp.dport))
+            source=TCPPeer((ether.src, ip.src, tcp.sport)),
+            destination=TCPPeer((ether.dst, ip.dst, tcp.dport))
         )
 
     def match(
@@ -296,8 +278,8 @@ class Channel:
 
         return self.source.match(source) and self.destination.match(destination)
 
-    def flip(self) -> Channel:
-        return Channel(source=self.destination, destination=self.source)
+    def flip(self) -> TCPChannel:
+        return TCPChannel(source=self.destination, destination=self.source)
 
     def to_packet(self) -> Packet:
         return (
@@ -307,13 +289,13 @@ class Channel:
 
 
 def match_channel_signatures(
-    channel: Channel | Packet,
+    channel: TCPChannel | Packet,
     source: Signature | None = None,
     destination: Signature | None = None,
     joined: joinedSignature = None
 ) -> bool:
-    if not isinstance(channel, Channel):
-        channel = Channel.from_packet(channel)
+    if not isinstance(channel, TCPChannel):
+        channel = TCPChannel.from_packet(channel)
 
     return channel.match(source, destination, joined)
 
@@ -321,24 +303,18 @@ def match_channel_signatures(
 @dataclass(slots=True, frozen=True, unsafe_hash=True)
 class TCPCommunication:
 
-    channel: Channel
+    channel: TCPChannel
     data: TCPData
 
     @classmethod
     def from_packet(cls, packet: Packet) -> TCPCommunication:
         return cls(
-            channel=Channel.from_packet(packet),
+            channel=TCPChannel.from_packet(packet),
             data=TCPData.from_packet(packet)
         )
 
-    def to_tcp(self) -> TCP | Packet:
-        return self.data.to_tcp(
-            source=self.channel.source.port,
-            destination=self.channel.destination.port
-        )
-
     def to_packet(self) -> Packet:
-        return self.channel.to_packet() / self.to_tcp()
+        return self.channel.to_packet() / self.data.to_tcp()
 
     def response(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
         return TCPCommunication(
@@ -365,7 +341,7 @@ class TCPCommunication:
 
 
 @dataclass(slots=True)
-class State:
+class TCPState:
 
     _data: Packet = None
 
@@ -425,23 +401,23 @@ class State:
     def next_communication(self, flags: str = None, payload: bytes = None) -> TCPCommunication:
         return self.communication().next(flags=flags, payload=payload)
 
-    def response(self, flags: str = None, payload: bytes = None) -> State:
-        return State(self.response_packet(flags=flags, payload=payload))
+    def response(self, flags: str = None, payload: bytes = None) -> TCPState:
+        return TCPState(self.response_packet(flags=flags, payload=payload))
 
-    def next(self, flags: str = None, payload: bytes = None) -> State:
-        return State(self.next_packet(flags=flags, payload=payload))
+    def next(self, flags: str = None, payload: bytes = None) -> TCPState:
+        return TCPState(self.next_packet(flags=flags, payload=payload))
 
-    def source(self) -> Peer:
-        return Peer((self.ether.src, self.ip.src, self.tcp.sport))
+    def source(self) -> TCPPeer:
+        return TCPPeer((self.ether.src, self.ip.src, self.tcp.sport))
 
-    def destination(self) -> Peer:
-        return Peer((self.ether.dst, self.ip.dst, self.tcp.dport))
+    def destination(self) -> TCPPeer:
+        return TCPPeer((self.ether.dst, self.ip.dst, self.tcp.dport))
 
-    def channel(self) -> Channel:
-        return Channel(source=self.source(), destination=self.destination())
+    def channel(self) -> TCPChannel:
+        return TCPChannel(source=self.source(), destination=self.destination())
 
-    def copy(self) -> State:
-        return State(self.packet.copy())
+    def copy(self) -> TCPState:
+        return TCPState(self.packet.copy())
 
     def match(
         self,
@@ -458,12 +434,12 @@ class State:
 @dataclass
 class TCPHub:
 
-    channels: dict[Channel, State] = field(default_factory=dict)
+    channels: dict[TCPChannel, TCPState] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.channels)
 
-    def __getitem__(self, key: Channel | Packet) -> State:
+    def __getitem__(self, key: TCPChannel | Packet) -> TCPState:
         return self.get(key)
 
     def copy(self) -> TCPHub:
@@ -482,18 +458,18 @@ class TCPHub:
         if not match_flag_signatures(packet, source, destination, joined):
             return False
 
-        key = Channel.from_packet(packet)
+        key = TCPChannel.from_packet(packet)
 
         if not key.match(source, destination, joined):
             return False
 
-        self.channels.setdefault(key, State()).collect(packet)
+        self.channels.setdefault(key, TCPState()).collect(packet)
 
         return True
 
-    def get(self, key: Channel | Packet) -> State:
+    def get(self, key: TCPChannel | Packet) -> TCPState:
         if isinstance(key, Packet):
-            key = Channel.from_packet(key)
+            key = TCPChannel.from_packet(key)
 
         return self.channels[key]
 
@@ -502,7 +478,7 @@ class TCPHub:
         source: Signature = None,
         destination: Signature = None,
         joined: joinedSignature = None
-    ) -> Iterable[Channel]:
+    ) -> Iterable[TCPChannel]:
         for key, value in self.channels.items():
             if (
                 match_flag_signatures(value.tcp, source, destination, joined) and
