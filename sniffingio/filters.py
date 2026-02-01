@@ -4,8 +4,10 @@ from typing import Iterable, Callable, ClassVar, Self
 from dataclasses import dataclass, asdict, field
 from abc import ABCMeta, abstractmethod
 
+from scapy.arch.common import compile_filter
 from scapy.all import Packet, sniff
 from scapy.layers.inet import TCP, UDP
+from scapy.error import Scapy_Exception
 
 
 __all__ = [
@@ -28,7 +30,8 @@ __all__ = [
     "load_filters",
     "ip_filter",
     "mac_filter",
-    "port_filter"
+    "port_filter",
+    "valid_filter"
 ]
 
 
@@ -466,3 +469,11 @@ def ip_filter(values: set[str], src: bool = False, dst: bool = False) -> PF:
 
 def port_filter(values: set[int], src: bool = False, dst: bool = False) -> PF:
     return _filter('port', values, src=src, dst=dst)
+
+def valid_filter(f: str) -> bool:
+    try:
+        compile_filter(f)
+        return True
+
+    except Scapy_Exception:
+        return False

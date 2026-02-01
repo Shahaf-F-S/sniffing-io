@@ -10,16 +10,16 @@ def tcp_double_pa_r(hub: TCPHub, packet: Packet):
     org = hub.get(packet).communication()
 
     pa_to_src = org.response(flags='PA', payload=b'hello')
-    # sendp(pa_to_src.to_packet())
+    sendp(pa_to_src.to_packet())
 
     r_to_src = pa_to_src.next(flags='R')
-    # sendp(r_to_src.to_packet())
+    sendp(r_to_src.to_packet())
 
     pa_to_dst = org.next(flags='PA', payload=b'hello')
-    # sendp(pa_to_dst.to_packet())
+    sendp(pa_to_dst.to_packet())
 
     r_to_dst = pa_to_dst.next(flags='R')
-    # sendp(r_to_dst.to_packet())
+    sendp(r_to_dst.to_packet())
 
     for c in (org, pa_to_src, r_to_src, pa_to_dst, r_to_dst):
         print(c)
